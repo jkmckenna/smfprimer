@@ -39,6 +39,7 @@ class DesignParameters:
     max_results: int = 5
     min_amplicon_size: int | None = None
     max_amplicon_size: int | None = None
+    max_degeneracies: int | None = 3
 
     def __post_init__(self) -> None:
         if not 1 <= self.min_length <= self.optimum_length <= self.max_length:
@@ -51,6 +52,8 @@ class DesignParameters:
             raise ValueError("search_window must be at least max_length")
         if self.max_results < 1:
             raise ValueError("max_results must be positive")
+        if self.max_degeneracies is not None and self.max_degeneracies < 0:
+            raise ValueError("max_degeneracies must be non-negative")
         if self.min_amplicon_size is not None and self.min_amplicon_size < 1:
             raise ValueError("min_amplicon_size must be positive")
         if self.max_amplicon_size is not None and self.max_amplicon_size < 1:

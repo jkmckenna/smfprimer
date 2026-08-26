@@ -26,3 +26,9 @@ Primer3 scores the concrete expected converted allele rather than every member
 of a degenerate oligo mixture. Always inspect ambiguity counts. Highly
 degenerate primers can also exceed the Bowtie expansion cap used during
 specificity assessment.
+
+`--max-degeneracies` (default: 3) discards candidate primers whose ambiguous
+`Y`/`R` base count exceeds the threshold before pairs are ranked, since
+Primer3 itself has no notion of ambiguity. The CLI accepts any non-negative
+integer; to disable the filter entirely, use the Python API with
+`DesignParameters(max_degeneracies=None)`.

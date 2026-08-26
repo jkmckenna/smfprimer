@@ -20,6 +20,7 @@ PARAMETERS = DesignParameters(
     max_results=1,
     min_amplicon_size=50,
     max_amplicon_size=70,
+    max_degeneracies=None,
 )
 
 

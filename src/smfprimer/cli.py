@@ -113,6 +113,12 @@ def _common_parser() -> argparse.ArgumentParser:
         metavar="MIN:MAX",
         help="allowed complete amplicon length",
     )
+    parser.add_argument(
+        "--max-degeneracies",
+        type=int,
+        default=defaults.max_degeneracies,
+        help="maximum degenerate (ambiguous) bases tolerated per primer",
+    )
     parser.add_argument("--format", choices=["tsv", "json"], default="tsv")
     parser.add_argument("--output", type=Path, help="output path; defaults to standard output")
     genbank = parser.add_mutually_exclusive_group()
@@ -316,6 +322,7 @@ def main(argv: list[str] | None = None) -> int:
             max_results=args.max_results,
             min_amplicon_size=minimum_product,
             max_amplicon_size=maximum_product,
+            max_degeneracies=args.max_degeneracies,
         )
         outcomes = design_targets(
             _targets(args),

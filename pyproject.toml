@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "smfprimer"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Primer design for single-molecule footprinting experiments."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -27,6 +27,9 @@ smfprimer = "smfprimer.cli:main"
 [dependency-groups]
 dev = ["pytest", "ruff"]
 docs = ["mkdocs-material==9.*"]
+
+[tool.hatch.version]
+path = "src/smfprimer/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/smfprimer"]

@@ -35,6 +35,12 @@ for that concrete allele. Ambiguity counts remain explicit for review.
 ## Installation
 
 ```console
+python -m pip install smfprimer
+```
+
+For a development install from a clone of the repository:
+
+```console
 python -m pip install -e .
 ```
 

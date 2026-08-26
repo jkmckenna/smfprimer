@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 from smfprimer import (
     ConvertedStrand,
     DesignParameters,
@@ -22,6 +24,7 @@ PARAMETERS = DesignParameters(
     max_results=3,
     min_amplicon_size=55,
     max_amplicon_size=70,
+    max_degeneracies=None,
 )
 
 
@@ -78,6 +81,31 @@ def test_primer3_penalty_replaces_custom_degeneracy_score() -> None:
     assert [pair.score for pair in pairs] == sorted(pair.score for pair in pairs)
 
 
+def test_max_degeneracies_filters_ambiguous_pairs() -> None:
+    unrestricted = design_primers(
+        TEMPLATE,
+        25,
+        40,
+        workflow=Workflow.DEAMINASE,
+        parameters=PARAMETERS,
+    )
+    assert any(
+        pair.forward.degeneracies > 0 or pair.reverse.degeneracies > 0 for pair in unrestricted
+    )
+
+    restricted = design_primers(
+        TEMPLATE,
+        25,
+        40,
+        workflow=Workflow.DEAMINASE,
+        parameters=replace(PARAMETERS, max_degeneracies=0),
+    )
+    assert all(
+        pair.forward.degeneracies == 0 and pair.reverse.degeneracies == 0 for pair in restricted
+    )
+    assert len(restricted) <= len(unrestricted)
+
+
 def test_amplicon_size_constraints_apply_to_complete_product() -> None:
     parameters = DesignParameters(
         min_length=18,
@@ -92,6 +120,7 @@ def test_amplicon_size_constraints_apply_to_complete_product() -> None:
         max_results=5,
         min_amplicon_size=50,
         max_amplicon_size=60,
+        max_degeneracies=None,
     )
     pairs = design_primers("ACGT" * 40, 60, 70, parameters=parameters)
     assert pairs

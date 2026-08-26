@@ -26,6 +26,8 @@ PERMISSIVE_OPTIONS = [
     "0",
     "--max-gc",
     "1",
+    "--max-degeneracies",
+    "999",
 ]
 
 

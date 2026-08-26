@@ -22,6 +22,7 @@ defaults installed with your version.
 | `--search-window N` | Bases searched on each side of the target |
 | `--product-size MIN:MAX` | Complete amplicon-size range |
 | `--max-results N` | Maximum ranked pairs per target |
+| `--max-degeneracies N` | Maximum degenerate (`Y`/`R`) bases tolerated per primer (default: 3) |
 | `--format {tsv,json}` | Tabular output format |
 | `--output PATH` | Write table rather than standard output |
 | `--genbank-output PATH` | Override companion GenBank path |

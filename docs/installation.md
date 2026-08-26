@@ -3,9 +3,17 @@
 smfprimer requires Python 3.11 or newer. Primer3-py and Biopython are installed
 as package dependencies.
 
+## From PyPI
+
+```console
+python -m pip install smfprimer
+smfprimer --version
+```
+
 ## Development installation
 
-From a clone of the repository:
+To contribute, or to run an unreleased change, install from a clone of the
+repository instead:
 
 ```console
 python -m venv .venv

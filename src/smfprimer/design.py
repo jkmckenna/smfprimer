@@ -84,6 +84,11 @@ def design_primers(
             window_encoded,
             window_unconverted,
         )
+        if parameters.max_degeneracies is not None and (
+            left.degeneracies > parameters.max_degeneracies
+            or right.degeneracies > parameters.max_degeneracies
+        ):
+            continue
         amplicon_start = left.start
         amplicon_end = right.end
         if converted_strand is ConvertedStrand.BOTTOM:
