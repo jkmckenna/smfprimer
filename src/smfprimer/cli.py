@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 from typing import NamedTuple
 
+from . import __version__
 from .design import design_targets
 from .genbank import format_genbank
 from .models import ConvertedStrand, DesignParameters, DesignTarget, TargetContext, Workflow
@@ -165,7 +166,7 @@ def _parser() -> argparse.ArgumentParser:
         description=__doc__,
         formatter_class=formatter,
     )
-    parser.add_argument("--version", action="version", version="%(prog)s 0.1.0")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     commands = parser.add_subparsers(dest="command", required=True)
     design = commands.add_parser("design", help="design primer pairs")
     modes = design.add_subparsers(dest="mode", required=True)
