@@ -1,0 +1,2 @@
+chrExample	docs	transcript	121	180	.	+	.	gene_id "example_gene"; transcript_id "example_tx"; gene_name "EXAMPLE";
+chrExample	docs	exon	121	150	.	+	.	gene_id "example_gene"; transcript_id "example_tx"; gene_name "EXAMPLE";

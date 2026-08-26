@@ -7,21 +7,27 @@ primers for experiments analyzed with
 It supports deaminase and conversion chemistries, explicit converted-strand
 selection, and CpG-, GpC-, or dual-context conversion designs.
 
+Tutorials, concepts, and complete CLI/output documentation live in the
+[documentation site source](docs/index.md). Build it locally with
+`mkdocs serve`.
+
 ## Chemistry model
 
 - **Deaminase:** every cytosine on the converted strand is uncertain. Forward
   primers use `Y` (C/T), while reverse primers use the complementary `R` (A/G).
 - **Conversion:** non-target cytosines are represented as converted thymine.
-  Cytosines in selected CpG/GpC contexts can be protected, so candidates avoid
-  those positions when possible and use `Y`/`R` only as a fallback.
+  Cytosines in selected CpG/GpC contexts can be protected, so reported oligos
+  use `Y`/`R` at those uncertain positions.
 - **Stranding:** the input is always a top-strand reference. Selecting bottom
   conversion reverses the chemistry internally, then maps all coordinates back
   to the supplied reference.
 
-Candidates without ambiguous bases rank ahead of candidates containing them.
-The current version uses a dependency-free Wallace-rule Tm estimate for
-screening; final thermodynamic and specificity checks are still required before
-ordering primers.
+Primer3 selects and ranks primer pairs using its thermodynamic model, size, Tm,
+GC, pair-complementarity, and product-size constraints. Design runs against the
+expected concrete converted allele (`Y` as `T`); smfprimer then reconstructs
+the order sequence from the IUPAC conversion template at Primer3's selected
+coordinates. Reported Tm, GC, primer scores, and pair scores are Primer3 values
+for that concrete allele. Ambiguity counts remain explicit for review.
 
 ## Installation
 
@@ -29,10 +35,10 @@ ordering primers.
 python -m pip install -e .
 ```
 
-The installed command has four input modes:
+The installed command has five input modes:
 
 ```console
-smfprimer design {sequence,fasta,bed,tss} --help
+smfprimer design {sequence,fasta,annotated,bed,tss} --help
 ```
 
 Coordinates are zero-based and half-open in BED, CLI arguments, and output.
@@ -65,6 +71,42 @@ smfprimer design fasta loci.fa \
   --output primers.tsv
 ```
 
+Add `--gtf annotations.gtf.gz` to retain every overlapping GTF feature in the
+annotated GenBank output. GTF coordinates are clipped to each FASTA record and
+remapped to record-local coordinates.
+
+## Annotated GenBank or SnapGene input
+
+GenBank (`.gb`, `.gbk`, `.gbff`, `.genbank`) and native SnapGene (`.dna`)
+inputs retain their original feature labels, qualifiers, coordinates, strands,
+and topology. By default, every feature labeled `required_interval` becomes an
+independent required primer-design interval:
+
+```console
+smfprimer design annotated construct.dna \
+  --product-size 300:700 \
+  --output primers.tsv
+```
+
+Multiple matching features produce multiple design outcomes. To use other
+feature labels or names, repeat `--required-feature` or provide one name per
+line with `--required-features-file`:
+
+```console
+smfprimer design annotated construct.gb \
+  --required-feature promoter_A \
+  --required-feature enhancer_B \
+  --output primers.tsv
+
+smfprimer design annotated construct.dna \
+  --required-features-file required_features.txt \
+  --output primers.tsv
+```
+
+SnapGene files are accepted as input and the annotated companion output is
+GenBank. Native `.dna` writing is intentionally not attempted because
+Biopython does not provide a maintained SnapGene writer.
+
 ## Genome FASTA plus BED
 
 Every BED interval is a required span. Forward and reverse primer sites must
@@ -75,13 +117,15 @@ size range.
 smfprimer design bed \
   --genome hg38.fa \
   --bed targets.bed \
+  --gtf genes.gtf.gz \
   --product-size 300:700 \
   --search-window 500
 ```
 
 Genome FASTA access is indexed in memory without loading chromosome sequences
 or writing an index beside the reference. The FASTA must be uncompressed and
-use a consistent sequence-line width within each record.
+use a consistent sequence-line width within each record. When `--gtf` is
+provided, overlapping features are clipped and retained in the GenBank record.
 
 ## TSS-centered targets
 
@@ -101,12 +145,69 @@ smfprimer design tss \
 ```
 
 Upstream and downstream distances follow transcriptional orientation.
+TSS-mode GenBank output automatically includes overlapping GTF features, and
+both plain `.gtf` and `.gtf.gz` inputs are supported.
 
 ## Output
 
 TSV is written to standard output by default. Use `--output PATH` to write a
-file or `--format json` for structured JSON. Failed targets remain in batch
-output with `status=no_candidates` and an explanation.
+file or `--format json` for structured JSON. File-based output automatically
+gets a companion `.gb` GenBank file containing each design template with the
+required target, ranked amplicons, and strand-aware primer annotations. Use
+`--genbank-output PATH` to choose its location or `--no-genbank` to disable it.
+Failed targets remain in batch output with `status=no_candidates` and an
+explanation.
+
+## Evaluate existing primer pairs
+
+`evaluate_primer_pairs` accepts one `PrimerSet` or any iterable of sets. Primer3
+`check_primers` supplies each primer's thermodynamic metrics, constraint
+problems, and Primer3 penalty, plus the pair penalty. smfprimer adds compatible
+template products, ambiguity counts, and optional Bowtie 1 specificity metrics:
+
+```python
+from smfprimer import PrimerSet, Workflow, evaluate_primer_pairs
+
+results = evaluate_primer_pairs(
+    [
+        PrimerSet(
+            "JM351_JM349",
+            forward="GAGAGATYTGGYAGYGGAGAG",
+            reverse="CTTTTCTRTCACCAATCCTRTCCC",
+        )
+    ],
+    template_sequence,
+    template_name="JM135",
+    workflow=Workflow.DEAMINASE,
+    bowtie_index="GRCh38",
+    mismatches=2,
+)
+```
+
+The template must be the unconverted top-strand sequence. Set
+`converted_strand="bottom"` when evaluating primers for the converted bottom
+strand. Product-size limits and primer thresholds can be supplied with a
+`DesignParameters` instance.
+
+## Bowtie 1 specificity assessment
+
+Pass a Bowtie 1 index prefix to align every concrete expansion of each ordered
+primer and report inward-facing genomic products within `--product-size`:
+
+```console
+bowtie-build GRCh38.fa GRCh38
+smfprimer design fasta loci.fa \
+  --product-size 250:500 \
+  --bowtie-index GRCh38 \
+  --specificity-mismatches 2 \
+  --output primers.tsv
+```
+
+Specificity columns report primer hit counts, intended products, off-target
+product counts, and off-target loci. Bowtie 1 is optional and is only invoked
+when `--bowtie-index` is supplied. The index defines the exact background being
+tested; use an appropriately transformed index when assessing converted-DNA
+backgrounds.
 
 Each successful pair includes:
 
@@ -116,7 +217,8 @@ Each successful pair includes:
 - The predicted converted amplicon
 - Forward and reverse sequences before conversion, in primer orientation
 - Final 5′→3′ `forward_order_sequence` and `reverse_order_sequence`
-- Tm, GC fraction, ambiguity count, pair score, parameters, and source metadata
+- Primer3 Tm, GC fraction, primer/pair penalties, ambiguity count, parameters,
+  design-engine provenance, and source metadata
 
 This makes the reference sequence auditable while keeping the sequences that
 should be ordered explicit.

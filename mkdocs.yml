@@ -1,0 +1,63 @@
+site_name: smfprimer
+site_description: Conversion-aware Primer3 primer design and specificity assessment
+repo_url: https://github.com/jkmckenna/smfprimer
+repo_name: jkmckenna/smfprimer
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - search.suggest
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: teal
+      toggle:
+        icon: material/weather-night
+        name: Use dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: teal
+      toggle:
+        icon: material/weather-sunny
+        name: Use light mode
+
+plugins:
+  - search
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences
+  - tables
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Installation: installation.md
+  - Concepts:
+      - Conversion chemistry: concepts/conversion-chemistry.md
+      - Required intervals: concepts/required-intervals.md
+      - Primer3 scoring: concepts/primer3-scoring.md
+  - Tutorials:
+      - Amplicon FASTA: tutorials/fasta-input.md
+      - GenBank and SnapGene: tutorials/annotated-input.md
+      - Genome, BED, and GTF: tutorials/genome-bed-gtf.md
+      - Existing primer pairs: tutorials/evaluate-primers.md
+      - Bowtie specificity: tutorials/bowtie-specificity.md
+  - Reference:
+      - CLI: reference/cli.md
+      - Python API: reference/python-api.md
+      - Output fields: reference/output-fields.md
+  - Contributing to docs: contributing.md

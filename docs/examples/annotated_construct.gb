@@ -1,0 +1,22 @@
+LOCUS       annotated_construct      160 bp    DNA     linear   SYN 26-AUG-2026
+DEFINITION  Small smfprimer documentation fixture.
+ACCESSION   annotated_construct
+VERSION     annotated_construct
+KEYWORDS    .
+SOURCE      synthetic DNA construct
+  ORGANISM  synthetic DNA construct
+            other sequences; artificial sequences.
+FEATURES             Location/Qualifiers
+     source          1..160
+                     /organism="synthetic DNA construct"
+                     /mol_type="other DNA"
+     promoter        41..50
+                     /label="example_promoter"
+     misc_feature    61..70
+                     /label="required_interval"
+                     /note="Every returned amplicon must contain this span"
+ORIGIN
+        1 gtcttgttgt ttcttgccct agtcttaaat gtacgacccc ttgtgggcga tctcagtaat
+       61 tactcaattg cctactcttc aaggagctta ccattgagac accgtagcct gatatggggg
+      121 cactccccgg agtatcgagc aatagatgca gttcgcgggt
+//
