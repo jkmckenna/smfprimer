@@ -5,7 +5,6 @@ from __future__ import annotations
 from .models import TargetContext, Workflow
 
 _COMPLEMENT = str.maketrans("ACGTRYSWKMBDHVN", "TGCAYRSWMKVHDBN")
-_GC_WEIGHTS = {"A": 0.0, "T": 0.0, "C": 1.0, "G": 1.0, "R": 0.5, "Y": 0.5}
 
 
 def normalize_sequence(sequence: str) -> str:
@@ -51,12 +50,3 @@ def encode_converted_template(
     return "".join(
         "Y" if i in targets else "T" if base == "C" else base for i, base in enumerate(sequence)
     )
-
-
-def gc_fraction(sequence: str) -> float:
-    return sum(_GC_WEIGHTS[base] for base in sequence) / len(sequence)
-
-
-def wallace_tm(sequence: str) -> float:
-    gc = sum(_GC_WEIGHTS[base] for base in sequence)
-    return 2.0 * (len(sequence) - gc) + 4.0 * gc

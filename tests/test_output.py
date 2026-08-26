@@ -1,27 +1,32 @@
 import json
 
 from smfprimer import DesignParameters, Workflow, design_targets
+from smfprimer.chemistry import reverse_complement
 from smfprimer.output import format_json, format_tsv, outcome_rows
 from smfprimer.targets import sequence_target
 
 PARAMETERS = DesignParameters(
-    min_length=4,
-    optimum_length=4,
-    max_length=4,
-    min_tm=0,
-    optimum_tm=12,
-    max_tm=100,
-    min_gc=0,
-    max_gc=1,
-    search_window=8,
+    min_length=18,
+    optimum_length=21,
+    max_length=25,
+    min_tm=35,
+    optimum_tm=55,
+    max_tm=75,
+    min_gc=0.2,
+    max_gc=0.8,
+    search_window=30,
     max_results=1,
-    min_amplicon_size=10,
-    max_amplicon_size=20,
+    min_amplicon_size=55,
+    max_amplicon_size=70,
 )
+
+FORWARD_SITE = "GAGAGATCTGGCAGCGGAGAG"
+REVERSE_SITE = "CTTTTCTGTCACCAATCCTGTCCC"
+TEMPLATE = FORWARD_SITE + "A" * 20 + reverse_complement(REVERSE_SITE)
 
 
 def test_output_distinguishes_reference_unconverted_and_order_sequences() -> None:
-    target = sequence_target("CCCCCCCCGGGGCCCC", 8, 10, target_id="locus")
+    target = sequence_target(TEMPLATE, 25, 40, target_id="locus")
     outcomes = design_targets([target], workflow=Workflow.DEAMINASE, parameters=PARAMETERS)
     row = outcome_rows(outcomes)[0]
     assert row["status"] == "ok"

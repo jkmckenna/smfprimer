@@ -25,11 +25,7 @@ class TargetContext(StrEnum):
 
 @dataclass(frozen=True)
 class DesignParameters:
-    """Candidate-generation and ranking parameters.
-
-    Melting temperatures use a dependency-free Wallace-rule estimate. They
-    are intended for candidate screening rather than final assay validation.
-    """
+    """Primer3 candidate-generation and pair-ranking parameters."""
 
     min_length: int = 18
     optimum_length: int = 22
@@ -68,6 +64,68 @@ class DesignParameters:
 
 
 @dataclass(frozen=True)
+class FeatureSegment:
+    start: int
+    end: int
+
+    def __post_init__(self) -> None:
+        if not 0 <= self.start < self.end:
+            raise ValueError("feature segment must satisfy 0 <= start < end")
+
+
+@dataclass(frozen=True)
+class ReferenceFeature:
+    """A coordinate-bearing annotation relative to a DesignTarget sequence."""
+
+    type: str
+    label: str
+    segments: tuple[FeatureSegment, ...]
+    strand: int = 0
+    qualifiers: tuple[tuple[str, tuple[str, ...]], ...] = ()
+
+    def __post_init__(self) -> None:
+        if not self.type:
+            raise ValueError("feature type must not be empty")
+        if not self.segments:
+            raise ValueError("feature must contain at least one segment")
+        if self.strand not in {-1, 0, 1}:
+            raise ValueError("feature strand must be -1, 0, or 1")
+
+    @property
+    def start(self) -> int:
+        return min(segment.start for segment in self.segments)
+
+    @property
+    def end(self) -> int:
+        return max(segment.end for segment in self.segments)
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        type: str,
+        label: str = "",
+        segments: list[tuple[int, int]] | tuple[tuple[int, int], ...],
+        strand: int = 0,
+        qualifiers: dict[str, Any] | None = None,
+    ) -> ReferenceFeature:
+        normalized = []
+        for key, value in (qualifiers or {}).items():
+            values = value if isinstance(value, (list, tuple)) else (value,)
+            normalized.append((key, tuple(str(item) for item in values)))
+        return cls(
+            type=type,
+            label=label,
+            segments=tuple(FeatureSegment(start, end) for start, end in segments),
+            strand=strand,
+            qualifiers=tuple(sorted(normalized)),
+        )
+
+    def qualifier_dict(self) -> dict[str, tuple[str, ...]]:
+        return dict(self.qualifiers)
+
+
+@dataclass(frozen=True)
 class DesignTarget:
     """A target interval within a supplied top-strand sequence window."""
 
@@ -80,6 +138,8 @@ class DesignTarget:
     source: str = "sequence"
     feature_strand: str = "."
     metadata: tuple[tuple[str, str], ...] = ()
+    reference_features: tuple[ReferenceFeature, ...] = ()
+    topology: str = "linear"
 
     def __post_init__(self) -> None:
         if not self.target_id:
@@ -90,6 +150,10 @@ class DesignTarget:
             raise ValueError("sequence_start must not be negative")
         if self.feature_strand not in {"+", "-", "."}:
             raise ValueError("feature_strand must be '+', '-', or '.'")
+        if self.topology not in {"linear", "circular"}:
+            raise ValueError("topology must be 'linear' or 'circular'")
+        if any(feature.end > len(self.sequence) for feature in self.reference_features):
+            raise ValueError("reference feature exceeds target sequence bounds")
 
     @property
     def reference_target_start(self) -> int:
@@ -112,6 +176,8 @@ class DesignTarget:
         source: str = "sequence",
         feature_strand: str = ".",
         metadata: dict[str, Any] | None = None,
+        reference_features: tuple[ReferenceFeature, ...] = (),
+        topology: str = "linear",
     ) -> DesignTarget:
         return cls(
             target_id=target_id,
@@ -123,6 +189,8 @@ class DesignTarget:
             source=source,
             feature_strand=feature_strand,
             metadata=tuple(sorted((key, str(value)) for key, value in (metadata or {}).items())),
+            reference_features=reference_features,
+            topology=topology,
         )
 
 
@@ -140,6 +208,42 @@ class CandidatePrimer:
 
 
 @dataclass(frozen=True)
+class OffTargetAmplicon:
+    reference_name: str
+    start: int
+    end: int
+    forward_strand: str
+    forward_mismatches: int
+    reverse_mismatches: int
+
+    @property
+    def length(self) -> int:
+        return self.end - self.start
+
+
+@dataclass(frozen=True)
+class PrimerSpecificity:
+    index: str
+    mismatches: int
+    forward_hit_count: int
+    reverse_hit_count: int
+    intended_amplicon_count: int
+    off_target_amplicons: tuple[OffTargetAmplicon, ...]
+
+    @property
+    def off_target_amplicon_count(self) -> int:
+        return len(self.off_target_amplicons)
+
+    @property
+    def status(self) -> str:
+        if self.off_target_amplicons:
+            return "off_targets"
+        if self.intended_amplicon_count:
+            return "specific"
+        return "no_off_targets"
+
+
+@dataclass(frozen=True)
 class PrimerPair:
     forward: CandidatePrimer
     reverse: CandidatePrimer
@@ -147,6 +251,7 @@ class PrimerPair:
     amplicon_end: int
     converted_strand: ConvertedStrand
     score: float
+    specificity: PrimerSpecificity | None = None
 
     @property
     def amplicon_length(self) -> int:

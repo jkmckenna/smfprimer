@@ -19,13 +19,14 @@ classifiers = [
   "Programming Language :: Python :: 3.12",
   "Topic :: Scientific/Engineering :: Bio-Informatics",
 ]
-dependencies = []
+dependencies = ["biopython>=1.81", "primer3-py>=2.3.0"]
 
 [project.scripts]
 smfprimer = "smfprimer.cli:main"
 
 [dependency-groups]
 dev = ["pytest", "ruff"]
+docs = ["mkdocs-material==9.*"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/smfprimer"]

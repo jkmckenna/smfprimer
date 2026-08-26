@@ -8,9 +8,19 @@ from pathlib import Path
 from typing import NamedTuple
 
 from .design import design_targets
+from .genbank import format_genbank
 from .models import ConvertedStrand, DesignParameters, DesignTarget, TargetContext, Workflow
 from .output import format_json, format_tsv
-from .targets import bed_targets, fasta_targets, read_fasta, sequence_target, tss_targets
+from .specificity import assess_specificity
+from .targets import (
+    annotate_targets_from_gtf,
+    annotated_targets,
+    bed_targets,
+    fasta_targets,
+    read_fasta,
+    sequence_target,
+    tss_targets,
+)
 
 
 class _ProductSize(NamedTuple):
@@ -67,16 +77,16 @@ def _common_parser() -> argparse.ArgumentParser:
         "--max-length", type=int, default=defaults.max_length, help="maximum primer length"
     )
     parser.add_argument(
-        "--min-tm", type=float, default=defaults.min_tm, help="minimum estimated primer Tm"
+        "--min-tm", type=float, default=defaults.min_tm, help="minimum Primer3 primer Tm"
     )
     parser.add_argument(
         "--optimum-tm",
         type=float,
         default=defaults.optimum_tm,
-        help="preferred estimated primer Tm",
+        help="preferred Primer3 primer Tm",
     )
     parser.add_argument(
-        "--max-tm", type=float, default=defaults.max_tm, help="maximum estimated primer Tm"
+        "--max-tm", type=float, default=defaults.max_tm, help="maximum Primer3 primer Tm"
     )
     parser.add_argument(
         "--min-gc", type=float, default=defaults.min_gc, help="minimum primer GC fraction"
@@ -105,6 +115,40 @@ def _common_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--format", choices=["tsv", "json"], default="tsv")
     parser.add_argument("--output", type=Path, help="output path; defaults to standard output")
+    genbank = parser.add_mutually_exclusive_group()
+    genbank.add_argument(
+        "--genbank-output",
+        type=Path,
+        help="annotated GenBank path; defaults beside file-based table output",
+    )
+    genbank.add_argument(
+        "--no-genbank",
+        action="store_true",
+        help="do not write the automatic GenBank companion file",
+    )
+    parser.add_argument(
+        "--bowtie-index",
+        help="Bowtie 1 index prefix used to assess primer-pair specificity",
+    )
+    parser.add_argument(
+        "--bowtie-executable",
+        default="bowtie",
+        help="Bowtie 1 executable name or path",
+    )
+    parser.add_argument(
+        "--specificity-mismatches",
+        type=int,
+        choices=range(4),
+        default=2,
+        metavar="0..3",
+        help="maximum mismatches per primer during Bowtie assessment",
+    )
+    parser.add_argument(
+        "--specificity-max-expansions",
+        type=int,
+        default=256,
+        help="maximum concrete sequences generated for each degenerate primer",
+    )
     return parser
 
 
@@ -145,6 +189,25 @@ def _parser() -> argparse.ArgumentParser:
         default=1,
         help="width of the required interval centered in each record",
     )
+    fasta.add_argument("--gtf", type=Path, help="optional overlapping feature annotations")
+
+    annotated = modes.add_parser(
+        "annotated",
+        parents=[common],
+        formatter_class=formatter,
+        help="design around named features in a GenBank or SnapGene file",
+    )
+    annotated.add_argument("annotated", type=Path, help="input .gb or .dna file")
+    annotated.add_argument(
+        "--required-feature",
+        action="append",
+        help="feature label/name to treat as required; may be repeated",
+    )
+    annotated.add_argument(
+        "--required-features-file",
+        type=Path,
+        help="text file containing one required feature label/name per line",
+    )
 
     bed = modes.add_parser(
         "bed",
@@ -154,6 +217,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     bed.add_argument("--genome", type=Path, required=True)
     bed.add_argument("--bed", type=Path, required=True)
+    bed.add_argument("--gtf", type=Path, help="optional overlapping feature annotations")
     bed.add_argument(
         "--flank",
         type=int,
@@ -201,10 +265,17 @@ def _targets(args: argparse.Namespace) -> list[DesignTarget]:
             )
         ]
     if args.mode == "fasta":
-        return fasta_targets(args.fasta, target_width=args.target_width)
+        targets = fasta_targets(args.fasta, target_width=args.target_width)
+        return annotate_targets_from_gtf(targets, args.gtf) if args.gtf else targets
+    if args.mode == "annotated":
+        return annotated_targets(
+            args.annotated,
+            required_feature_names=_required_feature_names(args),
+        )
     flank = args.search_window if args.flank is None else args.flank
     if args.mode == "bed":
-        return bed_targets(args.genome, args.bed, flank=flank)
+        targets = bed_targets(args.genome, args.bed, flank=flank)
+        return annotate_targets_from_gtf(targets, args.gtf) if args.gtf else targets
     return tss_targets(
         args.genome,
         args.gtf,
@@ -214,6 +285,17 @@ def _targets(args: argparse.Namespace) -> list[DesignTarget]:
         flank=flank,
         policy=args.tss_policy,
     )
+
+
+def _required_feature_names(args: argparse.Namespace) -> list[str]:
+    names = list(args.required_feature or [])
+    if args.required_features_file:
+        names.extend(
+            line.strip()
+            for line in args.required_features_file.read_text().splitlines()
+            if line.strip() and not line.startswith("#")
+        )
+    return names or ["required_interval"]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -242,6 +324,14 @@ def main(argv: list[str] | None = None) -> int:
             context=args.context,
             parameters=parameters,
         )
+        if args.bowtie_index:
+            outcomes = assess_specificity(
+                outcomes,
+                args.bowtie_index,
+                mismatches=args.specificity_mismatches,
+                bowtie=args.bowtie_executable,
+                maximum_expansions=args.specificity_max_expansions,
+            )
     except (OSError, UnicodeError, ValueError) as error:
         parser.error(str(error))
 
@@ -250,7 +340,23 @@ def main(argv: list[str] | None = None) -> int:
         args.output.write_text(content)
     else:
         sys.stdout.write(content)
+    genbank_path = _genbank_output_path(args)
+    if genbank_path is not None:
+        genbank_path.write_text(format_genbank(outcomes))
     return 0
+
+
+def _genbank_output_path(args: argparse.Namespace) -> Path | None:
+    if args.no_genbank:
+        return None
+    if args.genbank_output is not None:
+        return args.genbank_output
+    if args.output is None:
+        return None
+    path = args.output.with_suffix(".gb")
+    if path == args.output:
+        path = args.output.with_name(args.output.stem + ".annotations.gb")
+    return path
 
 
 if __name__ == "__main__":

@@ -23,6 +23,7 @@ FIELDS = [
     "workflow",
     "context",
     "converted_strand",
+    "design_engine",
     "amplicon_start",
     "amplicon_end",
     "amplicon_length",
@@ -44,6 +45,14 @@ FIELDS = [
     "reverse_gc_fraction",
     "reverse_degeneracies",
     "pair_score",
+    "specificity_status",
+    "specificity_index",
+    "specificity_mismatches",
+    "specificity_forward_hits",
+    "specificity_reverse_hits",
+    "specificity_intended_amplicons",
+    "specificity_off_target_amplicons",
+    "specificity_off_target_loci",
     "metadata",
     "parameters",
 ]
@@ -80,6 +89,7 @@ def _row(
             "workflow": outcome.workflow.value,
             "context": outcome.context.value,
             "converted_strand": outcome.converted_strand.value,
+            "design_engine": "primer3",
             "metadata": json.dumps(dict(target.metadata), sort_keys=True),
             "parameters": json.dumps(asdict(outcome.parameters), sort_keys=True),
         }
@@ -121,6 +131,34 @@ def _row(
             "pair_score": round(pair.score, 3),
         }
     )
+    if pair.specificity is not None:
+        specificity = pair.specificity
+        row.update(
+            {
+                "specificity_status": specificity.status,
+                "specificity_index": specificity.index,
+                "specificity_mismatches": specificity.mismatches,
+                "specificity_forward_hits": specificity.forward_hit_count,
+                "specificity_reverse_hits": specificity.reverse_hit_count,
+                "specificity_intended_amplicons": specificity.intended_amplicon_count,
+                "specificity_off_target_amplicons": specificity.off_target_amplicon_count,
+                "specificity_off_target_loci": json.dumps(
+                    [
+                        {
+                            "reference_name": product.reference_name,
+                            "start": product.start,
+                            "end": product.end,
+                            "length": product.length,
+                            "forward_strand": product.forward_strand,
+                            "forward_mismatches": product.forward_mismatches,
+                            "reverse_mismatches": product.reverse_mismatches,
+                        }
+                        for product in specificity.off_target_amplicons
+                    ],
+                    sort_keys=True,
+                ),
+            }
+        )
     return row
 
 
@@ -137,4 +175,6 @@ def format_json(outcomes: list[DesignOutcome]) -> str:
     for row in rows:
         row["metadata"] = json.loads(str(row["metadata"]))
         row["parameters"] = json.loads(str(row["parameters"]))
+        if row["specificity_off_target_loci"] is not None:
+            row["specificity_off_target_loci"] = json.loads(str(row["specificity_off_target_loci"]))
     return json.dumps(rows, indent=2) + "\n"

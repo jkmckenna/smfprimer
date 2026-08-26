@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import gzip
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
+from Bio import SeqIO
+
 from .chemistry import normalize_sequence
-from .models import DesignTarget
+from .models import DesignTarget, ReferenceFeature
 
 
 def read_fasta(path: str | Path) -> dict[str, str]:
@@ -171,6 +174,146 @@ def fasta_targets(path: str | Path, *, target_width: int = 1) -> list[DesignTarg
     return targets
 
 
+def annotated_targets(
+    path: str | Path,
+    *,
+    required_feature_names: list[str] | tuple[str, ...] = ("required_interval",),
+) -> list[DesignTarget]:
+    """Create one target per named feature in a GenBank or SnapGene file."""
+    path = Path(path)
+    names = {name.strip().casefold() for name in required_feature_names if name.strip()}
+    if not names:
+        raise ValueError("at least one required feature name must be supplied")
+    records = _annotated_records(path)
+    targets = []
+    available = set()
+    for record_index, record in enumerate(records, 1):
+        reference_name = _record_name(record, path, record_index)
+        sequence = normalize_sequence(str(record.seq))
+        features = tuple(
+            feature
+            for item in record.features
+            if item.type != "source"
+            if (feature := _reference_feature(item)) is not None
+        )
+        topology = str(record.annotations.get("topology", "linear")).lower()
+        if topology not in {"linear", "circular"}:
+            topology = "linear"
+        matched = []
+        for feature in features:
+            candidates = _feature_names(feature)
+            available.update(candidates)
+            if names & {candidate.casefold() for candidate in candidates}:
+                matched.append(feature)
+        for feature_index, feature in enumerate(matched, 1):
+            if len(feature.segments) > 1 and _crosses_origin(feature, len(sequence)):
+                raise ValueError(
+                    f"required feature {feature.label!r} crosses the circular origin; "
+                    "split it into a contiguous required interval"
+                )
+            label = feature.label or feature.type
+            target_id = f"{reference_name}:{label}"
+            if len(matched) > 1:
+                target_id += f":{feature_index}"
+            targets.append(
+                DesignTarget.create(
+                    target_id=target_id,
+                    reference_name=reference_name,
+                    sequence=sequence,
+                    target_start=feature.start,
+                    target_end=feature.end,
+                    source="snapgene" if path.suffix.lower() == ".dna" else "genbank",
+                    feature_strand={1: "+", -1: "-"}.get(feature.strand, "."),
+                    metadata={
+                        "required_feature_label": label,
+                        "required_feature_type": feature.type,
+                        "input_path": path,
+                    },
+                    reference_features=features,
+                    topology=topology,
+                )
+            )
+    if not targets:
+        choices = ", ".join(sorted(available)[:20]) or "none"
+        requested = ", ".join(sorted(names))
+        raise ValueError(
+            f"no required features matched {requested}; available feature names include: {choices}"
+        )
+    return targets
+
+
+def _annotated_records(path: Path):
+    suffix = path.suffix.lower()
+    if suffix == ".dna":
+        try:
+            return [SeqIO.read(path, "snapgene")]
+        except (ValueError, UnicodeError):
+            return list(SeqIO.parse(path, "genbank"))
+    if suffix in {".gb", ".gbk", ".gbff", ".genbank"}:
+        records = list(SeqIO.parse(path, "genbank"))
+        if not records:
+            raise ValueError(f"annotated sequence file contains no records: {path}")
+        return records
+    raise ValueError("annotated input must have a .dna, .gb, .gbk, .gbff, or .genbank suffix")
+
+
+def _record_name(record, path: Path, index: int) -> str:
+    for value in (record.id, record.name):
+        if value and not str(value).startswith("<unknown"):
+            return str(value)
+    return path.stem if index == 1 else f"{path.stem}_{index}"
+
+
+def _reference_feature(feature) -> ReferenceFeature | None:
+    if feature.location is None:
+        return None
+    parts = tuple((int(part.start), int(part.end)) for part in feature.location.parts)
+    strand = feature.location.strand or 0
+    qualifiers = {
+        key: tuple(str(value) for value in values) for key, values in feature.qualifiers.items()
+    }
+    label = _first_qualifier(
+        qualifiers,
+        "label",
+        "name",
+        "gene_name",
+        "gene",
+        "locus_tag",
+        "standard_name",
+    )
+    return ReferenceFeature.create(
+        type=feature.type or "misc_feature",
+        label=label,
+        segments=parts,
+        strand=strand,
+        qualifiers=qualifiers,
+    )
+
+
+def _first_qualifier(qualifiers: dict[str, tuple[str, ...]], *names: str) -> str:
+    for name in names:
+        values = qualifiers.get(name, ())
+        if values and values[0]:
+            return values[0]
+    return ""
+
+
+def _feature_names(feature: ReferenceFeature) -> set[str]:
+    names = {feature.type}
+    if feature.label:
+        names.add(feature.label)
+    qualifiers = feature.qualifier_dict()
+    for key in ("label", "name", "gene_name", "gene", "locus_tag", "standard_name"):
+        names.update(value for value in qualifiers.get(key, ()) if value)
+    return names
+
+
+def _crosses_origin(feature: ReferenceFeature, sequence_length: int) -> bool:
+    starts_at_origin = any(segment.start == 0 for segment in feature.segments)
+    ends_at_origin = any(segment.end == sequence_length for segment in feature.segments)
+    return starts_at_origin and ends_at_origin
+
+
 def bed_targets(
     genome_path: str | Path,
     bed_path: str | Path,
@@ -249,7 +392,7 @@ def _gtf_attributes(text: str) -> dict[str, str]:
 
 
 def _transcripts(gtf_path: str | Path) -> Iterator[_Transcript]:
-    with Path(gtf_path).open() as handle:
+    with _open_text(gtf_path) as handle:
         for line_number, line in enumerate(handle, 1):
             if not line.strip() or line.startswith("#"):
                 continue
@@ -286,6 +429,81 @@ def _gene_names(path: str | Path) -> list[str]:
     if not names:
         raise ValueError("gene list contains no identifiers")
     return names
+
+
+def annotate_targets_from_gtf(
+    targets: list[DesignTarget],
+    gtf_path: str | Path,
+) -> list[DesignTarget]:
+    """Attach clipped, window-local GTF annotations to design targets."""
+    by_reference: dict[str, list[tuple[int, DesignTarget]]] = {}
+    for index, target in enumerate(targets):
+        by_reference.setdefault(target.reference_name, []).append((index, target))
+    annotations: list[list[ReferenceFeature]] = [
+        list(target.reference_features) for target in targets
+    ]
+    with _open_text(gtf_path) as handle:
+        for line_number, line in enumerate(handle, 1):
+            if not line.strip() or line.startswith("#"):
+                continue
+            fields = line.rstrip("\n").split("\t")
+            if len(fields) != 9:
+                raise ValueError(f"GTF line {line_number} does not have nine columns")
+            reference, source, feature_type, start_text, end_text, score, strand, phase, text = (
+                fields
+            )
+            candidates = by_reference.get(reference, ())
+            if not candidates:
+                continue
+            try:
+                start, end = int(start_text) - 1, int(end_text)
+            except ValueError as error:
+                raise ValueError(f"GTF line {line_number} has non-integer coordinates") from error
+            attributes = _gtf_attributes(text)
+            label = next(
+                (
+                    attributes[key]
+                    for key in (
+                        "gene_name",
+                        "transcript_name",
+                        "exon_id",
+                        "gene_id",
+                        "transcript_id",
+                    )
+                    if attributes.get(key)
+                ),
+                feature_type,
+            )
+            qualifiers = dict(attributes)
+            qualifiers.update({"gtf_source": source, "gtf_score": score, "gtf_phase": phase})
+            feature_strand = {"+": 1, "-": -1}.get(strand, 0)
+            for target_index, target in candidates:
+                window_start = target.sequence_start
+                window_end = window_start + len(target.sequence)
+                overlap_start = max(start, window_start)
+                overlap_end = min(end, window_end)
+                if overlap_start >= overlap_end:
+                    continue
+                annotations[target_index].append(
+                    ReferenceFeature.create(
+                        type=feature_type,
+                        label=label,
+                        segments=[(overlap_start - window_start, overlap_end - window_start)],
+                        strand=feature_strand,
+                        qualifiers=qualifiers,
+                    )
+                )
+    return [
+        replace(target, reference_features=tuple(features))
+        for target, features in zip(targets, annotations, strict=True)
+    ]
+
+
+def _open_text(path: str | Path):
+    path = Path(path)
+    if path.suffix.lower() == ".gz":
+        return gzip.open(path, "rt")
+    return path.open()
 
 
 def tss_targets(
@@ -356,4 +574,4 @@ def tss_targets(
                     },
                 )
             )
-    return targets
+    return annotate_targets_from_gtf(targets, gtf_path)

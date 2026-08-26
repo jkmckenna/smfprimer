@@ -1,14 +1,8 @@
-"""Minimal, dependency-free primer candidate design."""
+"""Conversion-aware primer design powered by Primer3."""
 
 from __future__ import annotations
 
-from .chemistry import (
-    encode_converted_template,
-    gc_fraction,
-    normalize_sequence,
-    reverse_complement,
-    wallace_tm,
-)
+from .chemistry import encode_converted_template, normalize_sequence, reverse_complement
 from .models import (
     CandidatePrimer,
     ConvertedStrand,
@@ -19,88 +13,7 @@ from .models import (
     TargetContext,
     Workflow,
 )
-
-
-def _candidate(
-    unconverted_template: str,
-    encoded_template: str,
-    start: int,
-    end: int,
-    side: str,
-    parameters: DesignParameters,
-) -> CandidatePrimer | None:
-    unconverted_site = unconverted_template[start:end]
-    if set(unconverted_site) - set("ACGT"):
-        return None
-    binding_site = encoded_template[start:end]
-    sequence = binding_site if side == "forward" else reverse_complement(binding_site)
-    unconverted_sequence = (
-        unconverted_site if side == "forward" else reverse_complement(unconverted_site)
-    )
-    tm = wallace_tm(sequence)
-    gc = gc_fraction(sequence)
-    if not parameters.min_tm <= tm <= parameters.max_tm:
-        return None
-    if not parameters.min_gc <= gc <= parameters.max_gc:
-        return None
-    degeneracies = sequence.count("R") + sequence.count("Y")
-    score = (
-        degeneracies * 100.0
-        + abs(len(sequence) - parameters.optimum_length) * 2.0
-        + abs(tm - parameters.optimum_tm)
-        + abs(gc - 0.5) * 10.0
-    )
-    return CandidatePrimer(
-        sequence=sequence,
-        unconverted_sequence=unconverted_sequence,
-        side=side,
-        start=start,
-        end=end,
-        tm=tm,
-        gc_fraction=gc,
-        degeneracies=degeneracies,
-        score=score,
-    )
-
-
-def _candidates(
-    unconverted_template: str,
-    encoded_template: str,
-    target_start: int,
-    target_end: int,
-    side: str,
-    parameters: DesignParameters,
-) -> list[CandidatePrimer]:
-    if side == "forward":
-        starts = range(max(0, target_start - parameters.search_window), target_start)
-        sites = (
-            (start, start + length)
-            for start in starts
-            for length in range(parameters.min_length, parameters.max_length + 1)
-            if start + length <= target_start
-        )
-    else:
-        ends = range(
-            target_end + 1,
-            min(len(encoded_template), target_end + parameters.search_window) + 1,
-        )
-        sites = (
-            (end - length, end)
-            for end in ends
-            for length in range(parameters.min_length, parameters.max_length + 1)
-            if end - length >= target_end
-        )
-    candidates = [
-        candidate
-        for start, end in sites
-        if (
-            candidate := _candidate(
-                unconverted_template, encoded_template, start, end, side, parameters
-            )
-        )
-        is not None
-    ]
-    return sorted(candidates, key=lambda item: (item.score, item.start, item.end))
+from .primer3_engine import design
 
 
 def design_primers(
@@ -113,10 +26,12 @@ def design_primers(
     context: TargetContext | str = TargetContext.BOTH,
     parameters: DesignParameters | None = None,
 ) -> list[PrimerPair]:
-    """Design ranked primer pairs around a zero-based, half-open target interval.
+    """Design Primer3-ranked pairs around a zero-based, half-open target.
 
     Coordinates in results always refer to the supplied top-strand reference,
-    even when the bottom strand is the converted strand.
+    even when the bottom strand is the converted strand. Primer3 chooses sites
+    on the concrete converted allele; the reported oligos are reconstructed
+    from smfprimer's IUPAC-encoded template so conversion ambiguity is retained.
     """
     reference = normalize_sequence(reference)
     workflow = Workflow(workflow)
@@ -134,49 +49,92 @@ def design_primers(
         oriented_start, oriented_end = len(reference) - target_end, len(reference) - target_start
 
     encoded = encode_converted_template(oriented, workflow, context)
-    forwards = _candidates(oriented, encoded, oriented_start, oriented_end, "forward", parameters)
-    reverses = _candidates(oriented, encoded, oriented_start, oriented_end, "reverse", parameters)
+    window_start = max(0, oriented_start - parameters.search_window)
+    window_end = min(len(oriented), oriented_end + parameters.search_window)
+    window_encoded = encoded[window_start:window_end]
+    window_unconverted = oriented[window_start:window_end]
+    local_start = oriented_start - window_start
+    local_end = oriented_end - window_start
 
-    pairs: list[PrimerPair] = []
-    for forward in forwards:
-        compatible_for_forward = 0
-        for reverse in reverses:
-            amplicon_length = reverse.end - forward.start
-            if (
-                parameters.min_amplicon_size is not None
-                and amplicon_length < parameters.min_amplicon_size
-            ):
-                continue
-            if (
-                parameters.max_amplicon_size is not None
-                and amplicon_length > parameters.max_amplicon_size
-            ):
-                continue
-            compatible_for_forward += 1
-            if converted_strand is ConvertedStrand.TOP:
-                amplicon_start, amplicon_end = forward.start, reverse.end
-                reported_forward, reported_reverse = forward, reverse
-            else:
-                amplicon_start = len(reference) - reverse.end
-                amplicon_end = len(reference) - forward.start
-                reported_forward = _remap(forward, len(reference))
-                reported_reverse = _remap(reverse, len(reference))
-            pairs.append(
-                PrimerPair(
-                    reported_forward,
-                    reported_reverse,
-                    amplicon_start,
-                    amplicon_end,
-                    converted_strand,
-                    forward.score + reverse.score,
-                )
+    result = design(window_encoded, local_start, local_end, parameters)
+    pairs = []
+    for index in range(int(result.get("PRIMER_PAIR_NUM_RETURNED", 0))):
+        left_start, left_length = result[f"PRIMER_LEFT_{index}"]
+        right_three_prime, right_length = result[f"PRIMER_RIGHT_{index}"]
+        right_start = right_three_prime - right_length + 1
+        left = _primer_from_result(
+            result,
+            index,
+            "LEFT",
+            "forward",
+            left_start,
+            left_length,
+            window_start,
+            window_encoded,
+            window_unconverted,
+        )
+        right = _primer_from_result(
+            result,
+            index,
+            "RIGHT",
+            "reverse",
+            right_start,
+            right_length,
+            window_start,
+            window_encoded,
+            window_unconverted,
+        )
+        amplicon_start = left.start
+        amplicon_end = right.end
+        if converted_strand is ConvertedStrand.BOTTOM:
+            amplicon_start = len(reference) - right.end
+            amplicon_end = len(reference) - left.start
+            left = _remap(left, len(reference))
+            right = _remap(right, len(reference))
+        pairs.append(
+            PrimerPair(
+                forward=left,
+                reverse=right,
+                amplicon_start=amplicon_start,
+                amplicon_end=amplicon_end,
+                converted_strand=converted_strand,
+                score=float(result[f"PRIMER_PAIR_{index}_PENALTY"]),
             )
-            # For a fixed forward primer, reverses are score-sorted. No pair
-            # below the first max_results compatible reverses can enter the
-            # global top max_results.
-            if compatible_for_forward >= parameters.max_results:
-                break
-    return sorted(pairs, key=lambda pair: pair.score)[: parameters.max_results]
+        )
+    return pairs
+
+
+def _primer_from_result(
+    result: dict,
+    index: int,
+    primer3_side: str,
+    side: str,
+    local_start: int,
+    length: int,
+    window_start: int,
+    encoded: str,
+    unconverted: str,
+) -> CandidatePrimer:
+    local_end = local_start + length
+    encoded_site = encoded[local_start:local_end]
+    unconverted_site = unconverted[local_start:local_end]
+    if side == "reverse":
+        sequence = reverse_complement(encoded_site)
+        unconverted_sequence = reverse_complement(unconverted_site)
+    else:
+        sequence = encoded_site
+        unconverted_sequence = unconverted_site
+    return CandidatePrimer(
+        sequence=sequence,
+        unconverted_sequence=unconverted_sequence,
+        side=side,
+        start=window_start + local_start,
+        end=window_start + local_end,
+        tm=float(result[f"PRIMER_{primer3_side}_{index}_TM"]),
+        gc_fraction=float(result[f"PRIMER_{primer3_side}_{index}_GC_PERCENT"]) / 100.0,
+        degeneracies=sum(base not in "ACGT" for base in sequence),
+        score=float(result[f"PRIMER_{primer3_side}_{index}_PENALTY"]),
+    )
 
 
 def design_targets(
@@ -203,9 +161,7 @@ def design_targets(
             context=context,
             parameters=parameters,
         )
-        message = ""
-        if not pairs:
-            message = "no primer pairs passed the length, Tm, GC, and amplicon constraints"
+        message = "" if pairs else "Primer3 returned no primer pairs for the configured constraints"
         outcomes.append(
             DesignOutcome(
                 target=target,
