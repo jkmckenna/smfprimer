@@ -33,3 +33,11 @@ Strict builds reject broken internal links and pages omitted from navigation.
 
 Pushes to `main` build and deploy the site through the documentation GitHub
 Actions workflow. Pull requests build the site without deploying it.
+
+## Enable GitHub Pages once
+
+Before the first deployment, a repository administrator must open
+**Settings → Pages** and select **GitHub Actions** under **Build and
+deployment → Source**. GitHub's default workflow token can deploy an enabled
+Pages site, but it cannot enable Pages for a repository that has no Pages site
+yet.
