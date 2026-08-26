@@ -1,5 +1,7 @@
 # smfprimer
 
+[![Documentation](https://github.com/jkmckenna/smfprimer/actions/workflows/docs.yml/badge.svg)](https://jkmckenna.github.io/smfprimer/)
+
 `smfprimer` is a minimal Python package and command-line tool for designing
 primers for experiments analyzed with
 [smftools](https://github.com/jkmckenna/smftools).
